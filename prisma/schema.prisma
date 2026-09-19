@@ -1,0 +1,169 @@
+// Agora data model — see docs/PLAN.md §4.
+// Dev provider is SQLite for zero-setup; production targets Postgres.
+// Enum-like fields are plain strings here (SQLite has no enums); the allowed
+// values live in src/lib/constants.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String   @id @default(cuid())
+  handle     String   @unique
+  email      String?  @unique
+  reputation Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  statements       Statement[]
+  arguments        Argument[]
+  citations        Citation[]
+  votes            Vote[]
+  empiricalReports EmpiricalReport[]
+}
+
+model Topic {
+  id       String  @id @default(cuid())
+  slug     String  @unique
+  name     String
+  blurb    String?
+  parentId String?
+  parent   Topic?  @relation("TopicTree", fields: [parentId], references: [id])
+  children Topic[] @relation("TopicTree")
+
+  statements Statement[]
+}
+
+model Statement {
+  id            String   @id @default(cuid())
+  canonicalText String
+  formalization String? // JSON: logical form for Level 1/2 (see lib/logic)
+  level         Int      @default(0) // 0 = natural language, 1 = propositional, 2 = predicate
+  status        String   @default("published") // draft | published | flagged | merged
+  createdAt     DateTime @default(now())
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  // Negation link (1-1 self relation): the negation partner of this statement.
+  negationOfId String?    @unique
+  negationOf   Statement? @relation("Negation", fields: [negationOfId], references: [id])
+  negatedBy    Statement? @relation("Negation")
+
+  // Merge/alias (docs/PLAN.md §3.1): a merged duplicate redirects to its canonical.
+  mergedIntoId String?
+  mergedInto   Statement?  @relation("Merge", fields: [mergedIntoId], references: [id])
+  mergedFrom   Statement[] @relation("Merge")
+
+  surfaceForms StatementSurfaceForm[] // alternate phrasings folded in by merges
+
+  topics Topic[]
+
+  concludes Argument[]        @relation("Conclusion") // arguments concluding this statement
+  premiseIn ArgumentPremise[] // arguments using this statement as a premise
+
+  citations        Citation[]
+  votes            Vote[]
+  empiricalReports EmpiricalReport[]
+}
+
+model Argument {
+  id             String   @id @default(cuid())
+  scheme         String   @default("deductive") // Waltonian scheme id or "deductive"
+  inferenceType  String   @default("deductive") // deductive | defeasible
+  validityStatus String   @default("unchecked") // unchecked | valid | invalid | unknown | na
+  proof          String? // JSON: resolution proof object (see docs/PLAN.md §9)
+  status         String   @default("published")
+  createdAt      DateTime @default(now())
+
+  conclusionId String
+  conclusion   Statement @relation("Conclusion", fields: [conclusionId], references: [id])
+
+  premises ArgumentPremise[]
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  attacksFrom Attack[] @relation("AttackFrom")
+}
+
+// Alternate phrasings of a canonical statement (accumulated when duplicates merge).
+model StatementSurfaceForm {
+  id          String   @id @default(cuid())
+  statementId String
+  text        String
+  createdAt   DateTime @default(now())
+
+  statement Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+}
+
+model ArgumentPremise {
+  argumentId  String
+  statementId String
+  position    Int    @default(0)
+
+  argument  Argument  @relation(fields: [argumentId], references: [id], onDelete: Cascade)
+  statement Statement @relation(fields: [statementId], references: [id])
+
+  @@id([argumentId, statementId])
+}
+
+// Explicit attacks (rebut/undercut/undermine). Many attacks are also *derivable*
+// from contradicting conclusions via the negation links, but explicit rows let
+// users assert undercuts directly.
+model Attack {
+  id             String   @id @default(cuid())
+  fromArgumentId String
+  fromArgument   Argument @relation("AttackFrom", fields: [fromArgumentId], references: [id], onDelete: Cascade)
+  targetKind     String // "argument" | "premise"
+  targetId       String
+  attackKind     String   @default("rebut") // rebut | undercut | undermine
+  createdAt      DateTime @default(now())
+}
+
+// --- Epistemic bases (docs/PLAN.md §2.3) ---
+
+model Citation {
+  id          String   @id @default(cuid())
+  statementId String
+  statement   Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  title       String
+  doi         String?
+  url         String?
+  venue       String?
+  year        Int?
+  stance      String   @default("support") // support | refute
+  strength    Float    @default(0.5) // 0..1 weight (venue, replication, methodology)
+  addedById   String?
+  addedBy     User?    @relation(fields: [addedById], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model Vote {
+  id          String   @id @default(cuid())
+  userId      String
+  statementId String
+  value       Int // -1 disagree, +1 agree
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  statement Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, statementId])
+}
+
+model EmpiricalReport {
+  id          String   @id @default(cuid())
+  statementId String
+  authorId    String?
+  description String
+  conditions  String?
+  createdAt   DateTime @default(now())
+
+  statement Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  author    User?     @relation(fields: [authorId], references: [id])
+}

@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f7f6f2;
+  --surface: #ffffff;
+  --ink: #1a1a17;
+  --muted: #6b6b63;
+  --line: #e3e1d8;
+  --accent: #7c3a2d; /* terracotta — a scholarly, non-tech accent */
+  --accent-soft: #f0e6e2;
+  --for: #2f6f4f;
+  --against: #a23b32;
+  --neutral: #9a8f66;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-for: var(--for);
+  --color-against: var(--against);
+  --font-serif: Georgia, "Times New Roman", serif;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, .serif {
+  font-family: var(--font-serif);
+}
+
+a {
+  color: inherit;
+}
+
+/* React Flow uses its own stylesheet imported in the component. */
