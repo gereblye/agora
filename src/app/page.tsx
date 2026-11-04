@@ -12,7 +12,15 @@ export default async function HomePage() {
 
   const statements = await prisma.statement.findMany({
     where: { status: { not: "merged" } },
-    include: { _count: { select: { concludes: true, premiseIn: true } } },
+    include: {
+      _count: {
+        select: {
+          // Exclude arguments discarded (soft-deleted) during a merge.
+          concludes: { where: { status: { not: "deprecated" } } },
+          premiseIn: { where: { argument: { status: { not: "deprecated" } } } },
+        },
+      },
+    },
   });
   const withMetrics = await Promise.all(
     statements.map(async (s) => ({ s, m: await computeMetrics(s.id) }))

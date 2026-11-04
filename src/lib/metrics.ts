@@ -65,7 +65,8 @@ async function gather(
       empiricalReports: true,
       negationOf: true,
       negatedBy: true,
-      concludes: { include: { premises: true } },
+      // Discarded-in-merge arguments are soft-deleted; exclude them everywhere.
+      concludes: { where: { status: { not: "deprecated" } }, include: { premises: true } },
     },
   });
 
@@ -122,7 +123,7 @@ async function gather(
   const negationId = statement.negationOf?.id ?? statement.negatedBy?.id ?? null;
   const opposing = negationId
     ? await prisma.argument.findMany({
-        where: { conclusionId: negationId },
+        where: { conclusionId: negationId, status: { not: "deprecated" } },
         include: { premises: true },
       })
     : [];

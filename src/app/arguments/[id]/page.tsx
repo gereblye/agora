@@ -31,6 +31,12 @@ export default async function ArgumentPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-8">
+      {argument.status === "deprecated" && (
+        <div className="rounded-lg border border-dashed border-line bg-[var(--bg)] px-4 py-3 text-sm text-muted">
+          This argument was <strong className="text-ink">discarded during a statement merge</strong>.
+          It is hidden from the graph and metrics, but kept here for the record.
+        </div>
+      )}
       <div>
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
           <Pill tone="neutral">{argument.inferenceType}</Pill>

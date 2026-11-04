@@ -9,8 +9,23 @@ import { prisma } from "./db";
 // already voted on both). The duplicate's phrasing is preserved as a surface
 // form, and the duplicate row is kept but marked "merged" so old URLs redirect.
 //
+// Arguments can be kept or discarded in the merge "arena": a discarded argument
+// is soft-deleted (status → "deprecated") rather than deleted, so it drops out
+// of every view and metric but stays recoverable. `discardArgumentIds` is
+// intersected with the arguments actually linked to the two statements, so a
+// stale or hostile id can never deprecate an unrelated argument.
+const DEPRECATED = "deprecated";
+
+export type MergeOptions = {
+  discardArgumentIds?: string[];
+};
+
 // Returns the id of the surviving canonical statement.
-export async function mergeStatements(dupId: string, canonicalRawId: string): Promise<string> {
+export async function mergeStatements(
+  dupId: string,
+  canonicalRawId: string,
+  options: MergeOptions = {}
+): Promise<string> {
   if (dupId === canonicalRawId) throw new Error("Cannot merge a statement into itself");
 
   // Follow any existing merge chain so we always target a live canonical.
@@ -32,6 +47,23 @@ export async function mergeStatements(dupId: string, canonicalRawId: string): Pr
   });
   if (!dup) throw new Error("Duplicate statement not found");
   if (dup.status === "merged") throw new Error("Statement is already merged");
+
+  // Resolve the discard request to the arguments genuinely linked to either
+  // statement (as a conclusion or as a premise) — anything else is ignored.
+  const requestedDiscards = new Set(options.discardArgumentIds ?? []);
+  let discardIds: string[] = [];
+  if (requestedDiscards.size) {
+    const linked = await prisma.argument.findMany({
+      where: {
+        OR: [
+          { conclusionId: { in: [dupId, canonicalId] } },
+          { premises: { some: { statementId: { in: [dupId, canonicalId] } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    discardIds = linked.map((a) => a.id).filter((id) => requestedDiscards.has(id));
+  }
 
   await prisma.$transaction(async (tx) => {
     // 1. Arguments concluding the duplicate now conclude the canonical.
@@ -119,7 +151,16 @@ export async function mergeStatements(dupId: string, canonicalRawId: string): Pr
       data: { statementId: canonicalId, text: dup.canonicalText },
     });
 
-    // 8. Tombstone the duplicate.
+    // 8. Discarded arguments: soft-delete after repointing, so the surviving
+    //    canonical never holds dangling references and the rows stay recoverable.
+    if (discardIds.length) {
+      await tx.argument.updateMany({
+        where: { id: { in: discardIds } },
+        data: { status: DEPRECATED },
+      });
+    }
+
+    // 9. Tombstone the duplicate.
     await tx.statement.update({
       where: { id: dupId },
       data: { status: "merged", mergedIntoId: canonicalId },

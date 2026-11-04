@@ -60,10 +60,14 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
       surfaceForms: true,
       citations: { orderBy: { strength: "desc" } },
       empiricalReports: { include: { author: true } },
+      // Arguments discarded during a merge are soft-deleted (status "deprecated")
+      // and must not appear here or in the premise-usage list.
       concludes: {
+        where: { status: { not: "deprecated" } },
         include: { premises: { include: { statement: true } }, conclusion: true },
       },
       premiseIn: {
+        where: { argument: { status: { not: "deprecated" } } },
         include: { argument: { include: { conclusion: true, premises: { include: { statement: true } } } } },
       },
     },
@@ -78,7 +82,7 @@ export default async function StatementPage({ params }: { params: Promise<{ id: 
   const negationPartner = statement.negationOf ?? statement.negatedBy ?? null;
   const opposing = negationPartner
     ? await prisma.argument.findMany({
-        where: { conclusionId: negationPartner.id },
+        where: { conclusionId: negationPartner.id, status: { not: "deprecated" } },
         include: { premises: { include: { statement: true } }, conclusion: true },
       })
     : [];

@@ -133,7 +133,8 @@ export async function mergeStatementAction(formData: FormData) {
   const dupId = String(formData.get("dupId") ?? "");
   const canonicalId = String(formData.get("canonicalId") ?? "");
   if (!dupId || !canonicalId) throw new Error("Both statements are required to merge");
-  const survivor = await mergeStatements(dupId, canonicalId);
+  const discardArgumentIds = formData.getAll("discardArgumentIds").map(String).filter(Boolean);
+  const survivor = await mergeStatements(dupId, canonicalId, { discardArgumentIds });
   revalidatePath(`/statements/${survivor}`);
   redirect(`/statements/${survivor}`);
 }
