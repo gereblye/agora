@@ -3,29 +3,82 @@
 import { useEffect, useRef, useState } from "react";
 import { createArgument } from "@/lib/actions";
 import { Pill } from "@/components/ui";
-import { recommendStatements, type StatementSuggestion } from "@/lib/recommend";
+import {
+  recommendStatements,
+  recommendPremises,
+  type StatementSuggestion,
+  type RecommendationSet,
+} from "@/lib/recommend";
 import { DUPLICATE_STRONG } from "@/lib/similarity";
+import { PremiseSuggestions, type FilledPremise } from "@/components/PremiseSuggestions";
 
 type Field = {
   key: string;
   text: string;
+  formalization: string; // optional logical form (unlocks the resolution proof)
   linkedId: string | null; // set when the user picks an existing statement
 };
 
 let fieldSeq = 0;
-const newField = (text = ""): Field => ({ key: `f${fieldSeq++}`, text, linkedId: null });
+const newField = (text = "", formalization = ""): Field => ({
+  key: `f${fieldSeq++}`,
+  text,
+  formalization,
+  linkedId: null,
+});
 
 export function ArgumentBuilder({
   initialConclusion,
 }: {
-  initialConclusion?: { id: string; text: string };
+  initialConclusion?: { id: string; text: string; formalization?: string | null };
 }) {
   const [conclusion, setConclusion] = useState<Field>(() =>
     initialConclusion
-      ? { key: `f${fieldSeq++}`, text: initialConclusion.text, linkedId: initialConclusion.id }
+      ? {
+          key: `f${fieldSeq++}`,
+          text: initialConclusion.text,
+          formalization: initialConclusion.formalization ?? "",
+          linkedId: initialConclusion.id,
+        }
       : newField()
   );
   const [premises, setPremises] = useState<Field[]>(() => [newField()]);
+
+  // Conclusion formalization drives the reverse-resolution premise recommender.
+  // A conclusion arriving from an already-formalized statement seeds it.
+  const [conclusionFormalization, setConclusionFormalization] = useState(
+    () => initialConclusion?.formalization ?? ""
+  );
+  const [showFormalize, setShowFormalize] = useState(
+    () => Boolean(initialConclusion?.formalization)
+  );
+  const [recSets, setRecSets] = useState<RecommendationSet[]>([]);
+  const [recLoading, setRecLoading] = useState(false);
+
+  // Debounced fetch of premise suggestions as the formalization is edited.
+  useEffect(() => {
+    const f = conclusionFormalization.trim();
+    if (!f) {
+      setRecSets([]);
+      return;
+    }
+    const controller = new AbortController();
+    setRecLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const sets = await recommendPremises(f, conclusion.text, { signal: controller.signal });
+        setRecSets(sets);
+      } catch {
+        /* aborted or failed — leave prior suggestions */
+      } finally {
+        setRecLoading(false);
+      }
+    }, 300);
+    return () => {
+      controller.abort();
+      clearTimeout(t);
+    };
+  }, [conclusionFormalization, conclusion.text]);
 
   const hasConclusion = conclusion.text.trim().length > 0;
   const filledPremises = premises.filter((p) => p.text.trim().length > 0);
@@ -37,6 +90,18 @@ export function ArgumentBuilder({
   const updatePremise = (key: string, next: Field) =>
     setPremises((ps) => ps.map((p) => (p.key === key ? next : p)));
 
+  // Adopt a recommended set's premises (already resolved in the suggestion card:
+  // placeholders named, formulas substituted, reuse applied) into the builder.
+  const useFilled = (prems: FilledPremise[]) =>
+    setPremises(
+      prems.map((p) => ({
+        key: `f${fieldSeq++}`,
+        text: p.text,
+        formalization: p.formalization,
+        linkedId: p.linkedId,
+      }))
+    );
+
   return (
     <form action={createArgument} className="space-y-6">
       <section>
@@ -47,6 +112,39 @@ export function ArgumentBuilder({
           placeholder="e.g. The ground is wet."
           nameId="conclusionId"
           nameText="conclusionText"
+        />
+
+        {/* Formalize → drives the reverse-resolution premise recommender. */}
+        {showFormalize || conclusionFormalization ? (
+          <div className="mt-2">
+            <label className="mb-1 block text-xs font-medium text-muted">
+              Conclusion formalization
+            </label>
+            <input
+              value={conclusionFormalization}
+              onChange={(e) => setConclusionFormalization(e.target.value)}
+              placeholder="e.g. Mortal(socrates)   or   rain -> wet"
+              className="w-full rounded-md border border-line px-3 py-2 font-mono text-sm"
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowFormalize(true)}
+            className="mt-2 text-xs font-medium text-accent hover:underline"
+          >
+            + Formalize this conclusion to get premise suggestions
+          </button>
+        )}
+
+        {/* Carried for the server action (Phase C persists it on the statement). */}
+        <input type="hidden" name="conclusionFormalization" value={conclusionFormalization} />
+
+        <PremiseSuggestions
+          sets={recSets}
+          loading={recLoading}
+          formula={conclusionFormalization}
+          onUse={useFilled}
         />
       </section>
 
@@ -70,6 +168,7 @@ export function ArgumentBuilder({
                   placeholder="State a premise…"
                   nameId="premiseIds"
                   nameText="premiseTexts"
+                  nameForm="premiseForms"
                 />
               </div>
               <button
@@ -116,12 +215,14 @@ function FieldEditor({
   placeholder,
   nameId,
   nameText,
+  nameForm,
 }: {
   field: Field;
   onChange: (next: Field) => void;
   placeholder: string;
   nameId: string;
   nameText: string;
+  nameForm?: string; // when set, the field also carries an optional formalization
 }) {
   const [suggestions, setSuggestions] = useState<StatementSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -164,12 +265,10 @@ function FieldEditor({
 
   return (
     <div className="relative">
-      {/* Hidden inputs the server action reads (linked id wins over text). */}
-      {field.linkedId ? (
-        <input type="hidden" name={nameId} value={field.linkedId} />
-      ) : (
-        <input type="hidden" name={nameText} value={field.text} />
-      )}
+      {/* Hidden inputs the server action reads (linked id wins over text). Both
+          are always emitted so premise rows stay index-aligned on the server. */}
+      <input type="hidden" name={nameId} value={field.linkedId ?? ""} />
+      <input type="hidden" name={nameText} value={field.text} />
 
       <textarea
         rows={2}
@@ -182,6 +281,16 @@ function FieldEditor({
         onFocus={() => setOpen(true)}
         className="w-full rounded-md border border-line px-3 py-2"
       />
+
+      {nameForm && (
+        <input
+          name={nameForm}
+          value={field.formalization}
+          onChange={(e) => onChange({ ...field, formalization: e.target.value })}
+          placeholder="formalization (optional) — e.g. Man(socrates)"
+          className="mt-1 w-full rounded-md border border-line px-3 py-1.5 font-mono text-xs"
+        />
+      )}
 
       <div className="mt-1 flex items-center gap-2 text-xs text-muted">
         {field.linkedId ? (

@@ -14,6 +14,9 @@ export type StatementSuggestion = {
   topics: string[];
 };
 
+import type { RecommendationSet } from "./logic/reverseResolution";
+export type { RecommendationSet };
+
 export type RecommendOptions = {
   signal?: AbortSignal;
   exclude?: string; // statement id to omit from results
@@ -37,4 +40,28 @@ export async function recommendStatements(
   if (!res.ok) return [];
   const data = await res.json();
   return (data.results ?? []) as StatementSuggestion[];
+}
+
+// Reverse-resolution premise recommender: given a conclusion's formalization
+// (and optional natural-language text), returns verified premise sets that
+// deductively entail it. Like recommendStatements, the UI goes through this
+// seam rather than hitting the route directly — the engine stays server-side
+// (src/app/api/arguments/premises). Returns [] for an empty/unparseable formula.
+export async function recommendPremises(
+  formula: string,
+  text?: string,
+  opts: { signal?: AbortSignal } = {}
+): Promise<RecommendationSet[]> {
+  const f = formula.trim();
+  if (!f) return [];
+
+  const params = new URLSearchParams({ formula: f });
+  if (text?.trim()) params.set("text", text.trim());
+
+  const res = await fetch(`/api/arguments/premises?${params.toString()}`, {
+    signal: opts.signal,
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.sets ?? []) as RecommendationSet[];
 }

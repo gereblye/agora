@@ -14,7 +14,7 @@ export default async function NewArgumentPage({
   const initialConclusion = conclusion
     ? await prisma.statement.findUnique({
         where: { id: conclusion },
-        select: { id: true, canonicalText: true },
+        select: { id: true, canonicalText: true, formalization: true },
       })
     : null;
 
@@ -30,7 +30,11 @@ export default async function NewArgumentPage({
         <ArgumentBuilder
           initialConclusion={
             initialConclusion
-              ? { id: initialConclusion.id, text: initialConclusion.canonicalText }
+              ? {
+                  id: initialConclusion.id,
+                  text: initialConclusion.canonicalText,
+                  formalization: initialConclusion.formalization,
+                }
               : undefined
           }
         />

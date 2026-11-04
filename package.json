@@ -11,7 +11,8 @@
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",
     "db:reset": "prisma db push --force-reset && prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "test:logic": "tsx src/lib/logic/reverse.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

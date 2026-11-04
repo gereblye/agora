@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "./db";
 import { getCurrentUser } from "./currentUser";
 import { mergeStatements } from "./merge";
+import { detectLevel } from "./logic/formula";
 
 export async function castVote(statementId: string, value: number) {
   const user = await getCurrentUser();
@@ -51,9 +52,14 @@ export async function createStatement(formData: FormData) {
 // while preserving "statements are shared nodes" (docs/PLAN.md §3.1). Near-
 // duplicate consolidation is a separate flow (the merge picker); here we only
 // avoid creating a byte-for-byte duplicate.
-async function resolveStatement(text: string, userId: string): Promise<string | null> {
+async function resolveStatement(
+  text: string,
+  userId: string,
+  formalization?: string | null
+): Promise<string | null> {
   const canonicalText = text.trim();
   if (!canonicalText) return null;
+  const form = formalization?.trim() || null;
 
   const existing = await prisma.statement.findFirst({
     where: {
@@ -61,10 +67,26 @@ async function resolveStatement(text: string, userId: string): Promise<string | 
       canonicalText: { equals: canonicalText },
     },
   });
-  if (existing) return existing.id;
+  if (existing) {
+    // Backfill a formalization only when the shared node has none — additive, so
+    // accepting a recommendation can unlock the proof without overwriting an
+    // existing formal form chosen by someone else.
+    if (form && !existing.formalization) {
+      await prisma.statement.update({
+        where: { id: existing.id },
+        data: { formalization: form, level: detectLevel(form) },
+      });
+    }
+    return existing.id;
+  }
 
   const created = await prisma.statement.create({
-    data: { canonicalText, level: 0, createdById: userId },
+    data: {
+      canonicalText,
+      formalization: form,
+      level: form ? detectLevel(form) : 0,
+      createdById: userId,
+    },
   });
   return created.id;
 }
@@ -74,23 +96,32 @@ export async function createArgument(formData: FormData) {
   const scheme = String(formData.get("scheme") ?? "deductive");
   const inferenceType = String(formData.get("inferenceType") ?? "deductive");
 
-  // The builder submits either a linked statement id or free text for each
-  // field. A linked id wins; otherwise the text is resolved (find-or-create).
+  // The builder submits, per field, a linked statement id (possibly empty), the
+  // free text, and an optional formalization. A linked id wins; otherwise the
+  // text is resolved (find-or-create), carrying the formalization onto the node.
+  const conclusionFormalization =
+    String(formData.get("conclusionFormalization") ?? "").trim() || null;
   const conclusionId =
     String(formData.get("conclusionId") ?? "").trim() ||
-    (await resolveStatement(String(formData.get("conclusionText") ?? ""), user.id));
+    (await resolveStatement(
+      String(formData.get("conclusionText") ?? ""),
+      user.id,
+      conclusionFormalization
+    ));
   if (!conclusionId) throw new Error("A conclusion is required");
 
+  // Each premise row emits all three fields (empty where absent), so the arrays
+  // stay index-aligned even when some rows are linked and others are free text.
   const linkedPremiseIds = formData.getAll("premiseIds").map(String).map((s) => s.trim());
   const premiseTexts = formData.getAll("premiseTexts").map(String);
+  const premiseForms = formData.getAll("premiseForms").map(String);
 
-  // Premises are positional and interleaved (each row emits one id-or-text),
-  // so resolve them in order, then dedupe while preserving first position.
+  const rowCount = Math.max(linkedPremiseIds.length, premiseTexts.length, premiseForms.length);
   const resolved = await Promise.all(
-    Array.from({ length: Math.max(linkedPremiseIds.length, premiseTexts.length) }, async (_, i) => {
+    Array.from({ length: rowCount }, async (_, i) => {
       const id = linkedPremiseIds[i];
       if (id) return id;
-      return resolveStatement(premiseTexts[i] ?? "", user.id);
+      return resolveStatement(premiseTexts[i] ?? "", user.id, premiseForms[i] ?? null);
     })
   );
   const premiseIds = [...new Set(resolved.filter((id): id is string => Boolean(id)))].filter(

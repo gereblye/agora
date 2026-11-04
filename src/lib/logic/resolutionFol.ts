@@ -14,12 +14,12 @@
 import type { ProofNode } from "./resolution";
 
 // ---------- Terms & literals ----------
-type Term = { kind: "var"; name: string } | { kind: "fun"; name: string; args: Term[] };
-type Literal = { neg: boolean; pred: string; args: Term[] };
+export type Term = { kind: "var"; name: string } | { kind: "fun"; name: string; args: Term[] };
+export type Literal = { neg: boolean; pred: string; args: Term[] };
 type Clause = Literal[];
 
 // ---------- FOL formula AST ----------
-type Formula =
+export type Formula =
   | { t: "pred"; neg?: never; pred: string; args: Term[] }
   | { t: "not"; f: Formula }
   | { t: "and"; l: Formula; r: Formula }
@@ -140,6 +140,12 @@ class FolParser {
     // bare identifier: variable if bound, else constant (0-ary function)
     return this.scope.includes(name) ? { kind: "var", name } : { kind: "fun", name, args: [] };
   }
+}
+
+// Parse a first-order formula into its AST. Exposed so the reverse-resolution
+// recommender can inspect a conclusion's structure (src/lib/logic/formula.ts).
+export function parseFol(src: string): Formula {
+  return new FolParser(src).parse();
 }
 
 // ---------- CNF pipeline ----------
