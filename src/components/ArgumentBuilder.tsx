@@ -6,6 +6,7 @@ import { Pill } from "@/components/ui";
 import {
   recommendStatements,
   recommendPremises,
+  suggestFormalization,
   type StatementSuggestion,
   type RecommendationSet,
 } from "@/lib/recommend";
@@ -54,6 +55,37 @@ export function ArgumentBuilder({
   );
   const [recSets, setRecSets] = useState<RecommendationSet[]>([]);
   const [recLoading, setRecLoading] = useState(false);
+
+  // NL→formula authoring aid: fills the formalization field from the conclusion's
+  // plain-English text (Claude, or an offline heuristic), for the author to edit.
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestNote, setSuggestNote] = useState<string | null>(null);
+
+  const suggestForm = async () => {
+    const text = conclusion.text.trim();
+    if (!text || suggesting) return;
+    setSuggesting(true);
+    setSuggestNote(null);
+    try {
+      const s = await suggestFormalization(text);
+      if (s) {
+        setConclusionFormalization(s.formula);
+        setShowFormalize(true);
+        setSuggestNote(
+          s.source === "llm"
+            ? "Suggested by Claude — review and edit before it drives the proof."
+            : "Suggested from sentence patterns — review and edit."
+        );
+      } else {
+        setShowFormalize(true);
+        setSuggestNote("Couldn't auto-formalize this one — write a formula below.");
+      }
+    } catch {
+      setSuggestNote("Suggestion failed — write a formula below.");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   // Debounced fetch of premise suggestions as the formalization is edited.
   useEffect(() => {
@@ -114,27 +146,57 @@ export function ArgumentBuilder({
           nameText="conclusionText"
         />
 
-        {/* Formalize → drives the reverse-resolution premise recommender. */}
+        {/* Formalize → drives the reverse-resolution premise recommender. The
+            author can write a formula or have one suggested from the plain-
+            English conclusion (docs/PLAN.md §9), then review/edit it. */}
         {showFormalize || conclusionFormalization ? (
           <div className="mt-2">
-            <label className="mb-1 block text-xs font-medium text-muted">
-              Conclusion formalization
-            </label>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="block text-xs font-medium text-muted">
+                Conclusion formalization
+              </label>
+              <button
+                type="button"
+                onClick={suggestForm}
+                disabled={!hasConclusion || suggesting}
+                className="text-xs font-medium text-accent hover:underline disabled:opacity-40"
+              >
+                {suggesting ? "Suggesting…" : "✨ Suggest from sentence"}
+              </button>
+            </div>
             <input
               value={conclusionFormalization}
-              onChange={(e) => setConclusionFormalization(e.target.value)}
+              onChange={(e) => {
+                setConclusionFormalization(e.target.value);
+                setSuggestNote(null);
+              }}
               placeholder="e.g. Mortal(socrates)   or   rain -> wet"
               className="w-full rounded-md border border-line px-3 py-2 font-mono text-sm"
             />
+            {suggestNote && <p className="mt-1 text-xs text-muted">{suggestNote}</p>}
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setShowFormalize(true)}
-            className="mt-2 text-xs font-medium text-accent hover:underline"
-          >
-            + Formalize this conclusion to get premise suggestions
-          </button>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={suggestForm}
+              disabled={!hasConclusion || suggesting}
+              className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-xs font-medium hover:border-accent disabled:opacity-40"
+            >
+              {suggesting ? "Suggesting…" : "✨ Suggest a formalization"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowFormalize(true)}
+              className="text-xs font-medium text-accent hover:underline"
+            >
+              + write one myself
+            </button>
+            {!hasConclusion && (
+              <span className="text-xs text-muted">Write the conclusion first.</span>
+            )}
+            {suggestNote && <span className="text-xs text-muted">{suggestNote}</span>}
+          </div>
         )}
 
         {/* Carried for the server action (Phase C persists it on the statement). */}

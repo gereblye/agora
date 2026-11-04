@@ -17,6 +17,9 @@ export type StatementSuggestion = {
 import type { RecommendationSet } from "./logic/reverseResolution";
 export type { RecommendationSet };
 
+import type { FormalizationSuggestion } from "./logic/formalize";
+export type { FormalizationSuggestion };
+
 export type RecommendOptions = {
   signal?: AbortSignal;
   exclude?: string; // statement id to omit from results
@@ -64,4 +67,27 @@ export async function recommendPremises(
   if (!res.ok) return [];
   const data = await res.json();
   return (data.sets ?? []) as RecommendationSet[];
+}
+
+// Natural-language → candidate formula authoring aid (docs/PLAN.md §9). Posts the
+// conclusion's plain-English text and gets back a parseable formula (from Claude,
+// or an offline heuristic) to seed the formalization field — always reviewed and
+// editable by the author. Returns null when nothing parseable could be produced.
+// POST keeps the claim text out of the URL and the engine/key server-side.
+export async function suggestFormalization(
+  text: string,
+  opts: { signal?: AbortSignal } = {}
+): Promise<FormalizationSuggestion | null> {
+  const t = text.trim();
+  if (!t) return null;
+
+  const res = await fetch("/api/formalize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: t }),
+    signal: opts.signal,
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return (data.suggestion ?? null) as FormalizationSuggestion | null;
 }
